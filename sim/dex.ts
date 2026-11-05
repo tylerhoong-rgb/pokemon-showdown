@@ -472,7 +472,8 @@ export class ModdedDex {
 		if (!this.isBase) throw new Error(`This must be called on the base Dex`);
 		if (this.modsLoaded) return this;
 
-		for (const mod of fs.readdirSync(MODS_DIR)) {
+		// data/mods may not exist in stripped-down servers
+		for (const mod of (fs.existsSync(MODS_DIR) ? fs.readdirSync(MODS_DIR) : [])) {
 			dexes[mod] = new ModdedDex(mod);
 		}
 		this.modsLoaded = true;

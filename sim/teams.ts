@@ -626,25 +626,8 @@ export const Teams = new class Teams {
 	}
 
 	getGenerator(format: Format | string, seed: PRNG | PRNGSeed | null = null) {
-		let TeamGenerator;
 		format = Dex.formats.get(format);
-		let mod = format.mod;
-		if (format.mod === 'monkeyspaw') mod = 'gen9';
-		const formatID = toID(format);
-		if (mod === 'gen9ssb') {
-			TeamGenerator = require(`../data/mods/gen9ssb/random-teams`).default;
-		} else if (mod === 'afd') {
-			TeamGenerator = require(`../data/mods/afd/random-teams`).default;
-		} else if (formatID.includes('gen9babyrandombattle')) {
-			TeamGenerator = require(`../data/random-battles/gen9baby/teams`).default;
-		} else if (formatID.includes('gen9randombattle') && format.ruleTable?.has('+tag:cap')) {
-			TeamGenerator = require(`../data/random-battles/gen9cap/teams`).default;
-		} else if (formatID.includes('gen9freeforallrandombattle')) {
-			TeamGenerator = require(`../data/random-battles/gen9ffa/teams`).default;
-		} else {
-			TeamGenerator = require(`../data/random-battles/${mod}/teams`).default;
-		}
-
+		const TeamGenerator = require(`../data/random-battles/gen9/teams`).default;
 		return new TeamGenerator(format, seed);
 	}
 
