@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set Editor</title>
+<style>
+:root {
+	--bg: #14171c; --panel: #1b1f26; --panel2: #222832; --line: #2f3744; --text: #e6e9ef; --muted: #8b95a7;
+	--accent: #5aa2ff; --accent-bg: rgba(90,162,255,.14); --good: #4cc38a; --warn: #e8b74a; --bad: #ef6a6a;
+	--bad-bg: rgba(239,106,106,.14); --warn-bg: rgba(232,183,74,.14); --shadow: 0 8px 30px rgba(0,0,0,.45);
+	--radius: 10px;
+	color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+	:root {
+		--bg: #f3f4f7; --panel: #ffffff; --panel2: #f0f2f6; --line: #d9dde6; --text: #1d2330; --muted: #667085;
+		--accent: #2563d9; --accent-bg: rgba(37,99,217,.1); --good: #1b8a56; --warn: #a56a00; --bad: #cc3333;
+		--bad-bg: rgba(204,51,51,.09); --warn-bg: rgba(165,106,0,.1); --shadow: 0 8px 30px rgba(20,30,60,.18);
+		color-scheme: light;
+	}
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+button, input, select { font: inherit; color: inherit; }
+button { background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 3px 7px; }
+button.ghost:hover:not(:disabled) { color: var(--text); border-color: var(--line); }
+button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+input[type=text], input[type=number], input[type=search], select {
+	background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; min-width: 0;
+}
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* top bar */
+.topbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.topbar h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 700; letter-spacing: .2px; }
+.topbar .file { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 36ch; }
+.topbar .spacer { flex: 1; }
+.status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+.dot.dirty { background: var(--warn); }
+
+/* layout */
+.app { flex: 1; display: grid; grid-template-columns: 290px 1fr; min-height: 0; }
+.side { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.side-head { padding: 10px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.side-head .row { display: flex; gap: 6px; }
+.side-head input[type=search] { flex: 1; }
+.list { overflow: auto; flex: 1; padding: 4px; }
+.sp { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 3px 8px; }
+.sp:hover { background: var(--panel2); }
+.sp.on { background: var(--accent-bg); border-color: var(--accent); }
+.sp img, .sprite { width: 36px; height: 36px; object-fit: contain; image-rendering: pixelated; flex: none; }
+.sp .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp .ct { color: var(--muted); font-size: 12px; }
+.sp .flag { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); flex: none; }
+.sp .flag.warn { background: var(--warn); }
+.side-foot { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.main { overflow: auto; padding: 18px 22px 60px; min-width: 0; }
+
+/* species header */
+.sphead { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.sphead .sprite { width: 64px; height: 64px; }
+.sphead h2 { margin: 0; font-size: 22px; }
+.sphead .id { color: var(--muted); font-size: 12px; }
+.types { display: flex; gap: 4px; margin-top: 4px; }
+.tb { font-size: 11px; font-weight: 700; letter-spacing: .3px; color: #fff; padding: 1px 8px; border-radius: 99px; text-transform: uppercase; }
+.lvl { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.lvl input { width: 64px; color: var(--text); }
+.bst { display: grid; grid-template-columns: repeat(6, 38px); gap: 4px; }
+.bst div { text-align: center; font-size: 11px; color: var(--muted); }
+.bst b { display: block; color: var(--text); font-size: 13px; }
+.bst i { display: block; height: 3px; border-radius: 2px; margin-top: 2px; }
+.sphead .grow { flex: 1; }
+
+/* set cards */
+.sets { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 14px; display: grid; gap: 12px; }
+.card-head { display: flex; align-items: center; gap: 6px; }
+.card-head .title { font-weight: 700; flex: 1; }
+.card-head .role-tag { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.field { display: grid; gap: 4px; }
+.field > label, .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.field .hint, .lbl .hint { text-transform: none; letter-spacing: 0; font-size: 12px; opacity: .85; }
+.push { margin-left: auto; }
+.mode { text-transform: none; letter-spacing: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px; min-height: 38px; }
+.chips:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 9px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; }
+.chip.typed { color: #fff; border-color: transparent; }
+.chip.bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+.chip button { all: unset; cursor: pointer; opacity: .6; padding: 0 5px; line-height: 1; border-radius: 99px; }
+.chip button:hover { opacity: 1; background: rgba(0,0,0,.25); }
+.chips input { flex: 1; min-width: 110px; border: none; background: transparent; outline: none !important; padding: 3px 4px; }
+.pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.pill { border: 2px solid transparent; border-radius: 99px; padding: 1px 9px; font-size: 11.5px; font-weight: 700; color: #fff; text-transform: uppercase; opacity: .38; letter-spacing: .3px; }
+.pill:hover:not(:disabled) { opacity: .75; border-color: transparent; }
+.pill.on { opacity: 1; border-color: var(--text); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field select, .field > input { width: 100%; }
+.mode { font-size: 11.5px; }
+
+/* EVs */
+.evs { display: grid; grid-template-columns: 38px 1fr 58px 40px 46px; gap: 4px 8px; align-items: center; font-size: 13px; }
+.evs .st { font-weight: 600; }
+.evs input[type=range] { width: 100%; accent-color: var(--accent); }
+.evs input[type=number] { width: 58px; padding: 3px 5px; }
+.evs .bs { color: var(--muted); text-align: right; font-size: 12px; }
+.evs .fin { text-align: right; font-weight: 700; }
+.evs .nat-up { color: var(--good); } .evs .nat-dn { color: var(--bad); }
+.evs .hd { font-size: 10.5px; text-transform: uppercase; color: var(--muted); letter-spacing: .4px; }
+.evtotal { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.evtotal b.over { color: var(--bad); } .evtotal b.ok { color: var(--good); }
+.default-box { background: var(--panel2); border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+.default-box span { flex: 1; font-size: 12.5px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.issues { display: grid; gap: 4px; }
+.issue { font-size: 12.5px; padding: 4px 9px; border-radius: 7px; background: var(--warn-bg); color: var(--warn); }
+.issue.error { background: var(--bad-bg); color: var(--bad); }
+.banner { margin-bottom: 12px; }
+
+/* autocomplete */
+.ac { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); max-height: 300px; overflow: auto; padding: 3px; }
+.ac-item { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.ac-item.on, .ac-item:hover { background: var(--accent-bg); }
+.ac-item .sub { color: var(--muted); font-size: 12px; margin-left: auto; padding-left: 14px; }
+.ac-item .dim { opacity: .55; }
+.ac-item .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+/* misc */
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 9px; padding: 9px 16px; z-index: 100; }
+.toast.error { border-color: var(--bad); color: var(--bad); }
+.toast.good { border-color: var(--good); }
+.welcome { max-width: 560px; margin: 8vh auto; text-align: center; display: grid; gap: 14px; }
+.welcome .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 36px 20px; }
+.welcome .drop.over { border-color: var(--accent); background: var(--accent-bg); }
+.welcome code { background: var(--panel2); padding: 2px 6px; border-radius: 5px; }
+.muted { color: var(--muted); }
+pre.raw { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 0; }
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: start center; padding-top: 14vh; z-index: 60; }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(440px, 92vw); display: grid; gap: 10px; box-shadow: var(--shadow); }
+.modal h3 { margin: 0; font-size: 16px; }
+.modal input { width: 100%; }
+
+@media (max-width: 860px) {
+	.app { grid-template-columns: 1fr; grid-template-rows: 38vh 1fr; }
+	.side { border-right: none; border-bottom: 1px solid var(--line); }
+	.sets { grid-template-columns: 1fr; }
+	.main { padding: 14px 12px 60px; }
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+	<h1>Set Editor</h1>
+	<span class="file" id="fileLabel"></span>
+	<span class="status" id="status"></span>
+	<span class="spacer"></span>
+	<button id="btnUndo" title="Undo (Ctrl+Z)">↶ Undo</button>
+	<button id="btnRedo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+	<button id="btnRaw" title="Show the JSON that will be saved">{ } JSON</button>
+	<button id="btnOpen">Open…</button>
+	<button id="btnSave" class="primary" title="Save (Ctrl+S)">Save</button>
+</div>
+<div class="app" id="app"></div>
+<input type="file" id="filePick" accept=".json,application/json" hidden>
+<datalist id="roles"></datalist>
+<script src="dex-data.js"></script>
+<script src="format.js"></script>
+<script>
+'use strict';
+/* ---------------------------------------------------------------- helpers */
+const D = window.DEX;
+const { serialize } = window.SetFormat;
+const toID = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+const $ = (s, el = document) => el.querySelector(s);
+const STATS = ['HP', 'Atk', 'Def', 'SpA', 'SpD', 'Spe'];
+const KEY_ORDER = ['role', 'movepool', 'abilities', 'teraTypes', 'item', 'evs', 'ivs', 'nature'];
+const TYPE_COLORS = {
+	Normal: '#8a8a59', Fire: '#e5622b', Water: '#4f7fe8', Electric: '#d9a912', Grass: '#4fa83c', Ice: '#5cb3b3',
+	Fighting: '#b02a22', Poison: '#8b2f8b', Ground: '#c9a24a', Flying: '#8a74d6', Psychic: '#e04274', Bug: '#8aa012',
+	Rock: '#8e7a24', Ghost: '#5b4690', Dragon: '#5e24e8', Dark: '#5a463a', Steel: '#8d8dac', Fairy: '#d9779a', Stellar: '#3aa6a0',
+};
+const TERA_TYPES = [...D.types, 'Stellar'];
+
+const index = {
+	species: new Map(D.species.map(s => [s.id, s])),
+	moves: new Map(D.moves.map(m => [toID(m.name), m])),
+	abilities: new Map(D.abilities.map(a => [toID(a.name), a])),
+	items: new Map(D.items.map(i => [toID(i.name), i])),
+	natures: new Map(D.natures.map(n => [toID(n.name), n])),
+};
+
+function h(tag, props, ...kids) {
+	const el = document.createElement(tag);
+	let value;
+	for (const [k, v] of Object.entries(props || {})) {
+		if (v == null || v === false) continue;
+		if (k === 'value') value = v;
+		else if (k === 'class') el.className = v;
+		else if (k === 'style') el.style.cssText = v;
+		else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+		else if (k === 'checked' || k === 'disabled' || k === 'selected') el[k] = v;
+		else el.setAttribute(k, v === true ? '' : v);
+	}
+	for (const kid of kids.flat(Infinity)) {
+		if (kid == null || kid === false) continue;
+		el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+	}
+	if (value !== undefined) el.value = value;
+	return el;
+}
+const typeBadge = t => h('span', { class: 'tb', style: `background:${TYPE_COLORS[t] || '#666'}` }, t);
+const clone = x => JSON.parse(JSON.stringify(x));
+const natureMult = (nat, i) => {
+	const n = index.natures.get(toID(nat || ''));
+	if (!n) return 1;
+	const key = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'][i];
+	return n.plus === key ? 1.1 : n.minus === key ? 0.9 : 1;
+};
+const getStat = (obj, stat, dflt) => {
+	if (!obj) return dflt;
+	for (const k of Object.keys(obj)) if (k.toLowerCase() === stat.toLowerCase()) return Number(obj[k]);
+	return dflt;
+};
+function fixOrder(set) {
+	const copy = { ...set };
+	for (const k of Object.keys(set)) delete set[k];
+	for (const k of KEY_ORDER) if (k in copy) set[k] = copy[k];
+	for (const k of Object.keys(copy)) if (!(k in set)) set[k] = copy[k];
+}
+function toast(msg, kind = '') {
+	document.querySelectorAll('.toast').forEach(t => t.remove());
+	const t = h('div', { class: 'toast ' + kind }, msg);
+	document.body.append(t);
+	setTimeout(() => t.remove(), kind === 'error' ? 6000 : 2600);
+}
+
+/* ---------------------------------------------------------------- state */
+let data = null;
+let baseline = '';
+let fileName = '';
+let mode = 'none'; // 'server' | 'fs' | 'upload'
+let fsHandle = null;
+let selected = null;
+let past = [], future = [];
+let lastKey = null, lastTime = 0;
+let showRaw = false;
+let filterText = '';
+let sortMode = 'file';
+let scrollToSelected = false;
+let issueMap = new Map();
+
+const isDirty = () => !!data && serialize(data) !== baseline;
+
+function mutate(fn, key) {
+	const now = Date.now();
+	if (!(key && key === lastKey && now - lastTime < 1200)) {
+		past.push(JSON.stringify(data));
+		if (past.length > 200) past.shift();
+	}
+	lastKey = key || null;
+	lastTime = now;
+	future = [];
+	fn();
+	render();
+}
+function undo() {
+	if (!past.length) return;
+	future.push(JSON.stringify(data));
+	data = JSON.parse(past.pop());
+	lastKey = null;
+	if (!data[selected]) selected = Object.keys(data)[0] || null;
+	render();
+}
+function redo() {
+	if (!future.length) return;
+	past.push(JSON.stringify(data));
+	data = JSON.parse(future.pop());
+	lastKey = null;
+	if (!data[selected]) selected = Object.keys(data)[0] || null;
+	render();
+}
+const editSet = (spId, i, fn, key) => mutate(() => {
+	const set = data[spId].sets[i];
+	fn(set);
+	fixOrder(set);
+}, key && `${spId}:${i}:${key}`);
+
+/* ---------------------------------------------------------------- validation */
+function validateAll() {
+	const map = new Map();
+	for (const [id, sp] of Object.entries(data)) map.set(id, validateSpecies(id, sp));
+	return map;
+}
+function validateSpecies(id, sp) {
+	const out = []; // {set: index|null, level, msg}
+	const dex = index.species.get(id);
+	if (!dex) out.push({ set: null, level: 'error', msg: `"${id}" is not a species id in the Pokédex.` });
+	if (!Array.isArray(sp.sets) || !sp.sets.length) {
+		out.push({ set: null, level: 'error', msg: 'No sets — the team generator needs at least one.' });
+		return out;
+	}
+	if (sp.level != null && !(sp.level >= 1 && sp.level <= 100)) out.push({ set: null, level: 'error', msg: 'Level must be between 1 and 100.' });
+	sp.sets.forEach((s, i) => {
+		const add = (level, msg) => out.push({ set: i, level, msg });
+		if (!Array.isArray(s.movepool) || !s.movepool.length) add('error', 'Movepool is empty.');
+		else {
+			const seen = new Set();
+			for (const m of s.movepool) {
+				if (!index.moves.has(toID(m))) add('error', `Unknown move "${m}".`);
+				if (seen.has(toID(m))) add('warn', `Duplicate move "${m}".`);
+				seen.add(toID(m));
+			}
+		}
+		if (!Array.isArray(s.abilities) || !s.abilities.length) add('error', 'No ability chosen.');
+		else for (const a of s.abilities) {
+			if (!index.abilities.has(toID(a))) add('error', `Unknown ability "${a}".`);
+			else if (dex && dex.abilities.length && !dex.abilities.some(x => toID(x) === toID(a))) add('warn', `${dex.name} doesn't normally have ${a}.`);
+		}
+		for (const t of s.teraTypes || []) if (!TERA_TYPES.includes(t)) add('error', `Unknown Tera type "${t}".`);
+		const items = s.item == null ? [] : Array.isArray(s.item) ? s.item : [s.item];
+		for (const it of items) if (it !== '' && !index.items.has(toID(it))) add('error', `Unknown item "${it}".`);
+		if (s.nature != null && !index.natures.has(toID(s.nature))) add('error', `Unknown nature "${s.nature}".`);
+		if (s.evs) {
+			let total = 0;
+			for (const st of STATS) {
+				const v = getStat(s.evs, st, 0);
+				total += v;
+				if (v > 252 || v < 0) add('error', `${st} EVs must be 0–252 (is ${v}).`);
+			}
+			if (total > 510) add('error', `EV total is ${total} (max 510).`);
+		}
+		if (s.ivs) for (const st of STATS) {
+			const v = getStat(s.ivs, st, 31);
+			if (v < 0 || v > 31) add('error', `${st} IVs must be 0–31 (is ${v}).`);
+		}
+	});
+	return out;
+}
+const countIssues = (level) => [...issueMap.values()].reduce((n, l) => n + l.filter(x => !level || x.level === level).length, 0);
+
+/* ---------------------------------------------------------------- autocomplete */
+function searchDex(list, q, exclude, extra) {
+	const nq = toID(q);
+	if (!nq) return [];
+	const lq = q.toLowerCase().trim();
+	const res = [];
+	for (const e of list) {
+		const id = toID(e.name);
+		if (exclude.has(id)) continue;
+		let score;
+		if (id.startsWith(nq)) score = 0;
+		else if (e.name.toLowerCase().split(/[\s\-']+/).some(w => w.startsWith(lq))) score = 1;
+		else if (id.includes(nq)) score = 2;
+		else continue;
+		res.push({ e, score });
+	}
+	res.sort((a, b) => a.score - b.score || (a.e.ns || 0) - (b.e.ns || 0) || a.e.name.length - b.e.name.length || a.e.name.localeCompare(b.e.name));
+	return res.slice(0, 10).map(r => r.e);
+}
+function attachAC(input, search, pick) {
+	let box = null, items = [], idx = 0;
+	const close = () => { if (box) box.remove(); box = null; items = []; };
+	const open = () => {
+		const q = input.value.trim();
+		items = search(q);
+		if (!items.length) return close();
+		idx = Math.max(0, Math.min(idx, items.length - 1));
+		if (!box) { box = h('div', { class: 'ac' }); document.body.append(box); }
+		box.replaceChildren(...items.map((it, i) => h('div', {
+			class: 'ac-item' + (i === idx ? ' on' : ''),
+			onmousedown: e => { e.preventDefault(); choose(i); },
+		}, ...it.node())));
+		const r = input.getBoundingClientRect();
+		box.style.minWidth = Math.max(r.width, 240) + 'px';
+		const bh = Math.min(300, box.scrollHeight + 8);
+		const below = window.innerHeight - r.bottom;
+		box.style.left = Math.min(r.left, window.innerWidth - 260) + 'px';
+		box.style.top = (below < bh + 10 && r.top > bh ? r.top - bh - 2 : r.bottom + 2) + 'px';
+		const on = box.children[idx];
+		if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+	};
+	const choose = i => { const it = items[i]; close(); input.value = ''; if (it) pick(it.value); };
+	input.addEventListener('input', () => { idx = 0; open(); });
+	input.addEventListener('focus', () => { idx = 0; open(); });
+	input.addEventListener('blur', close);
+	input.addEventListener('keydown', e => {
+		if (e.key === 'ArrowDown') { e.preventDefault(); if (!box) open(); else { idx = Math.min(items.length - 1, idx + 1); open(); } }
+		else if (e.key === 'ArrowUp') { e.preventDefault(); idx = Math.max(0, idx - 1); open(); }
+		else if (e.key === 'Escape') { close(); }
+		else if (e.key === 'Enter' || e.key === ',') {
+			if (box && items.length) { e.preventDefault(); choose(idx); }
+			else if (input.value.trim()) { e.preventDefault(); const v = input.value.trim(); close(); input.value = ''; pick(v); }
+		}
+	});
+}
+/** Build a search function for a dex list: results get a "node" renderer and a final "add anyway" option. */
+function dexSearch(list, render, exclude, empty) {
+	return q => {
+		if (!q) return (empty ? empty() : []).map(e => ({ value: e.name, node: () => render(e) }));
+		const found = searchDex(list, q, exclude);
+		const res = found.map(e => ({ value: e.name, node: () => render(e) }));
+		if (!found.some(e => toID(e.name) === toID(q))) res.push({ value: q, node: () => [h('span', { class: 'muted' }, `Add “${q}” (not in the dex)`)] });
+		return res;
+	};
+}
+const renderMove = m => [h('span', { class: 'sw', style: `background:${TYPE_COLORS[m.type]}` }), m.name, h('span', { class: 'sub' }, `${m.type} · ${m.cat === 'P' ? 'Phys' : m.cat === 'S' ? 'Spec' : 'Status'}${m.bp ? ' · ' + m.bp : ''}`)];
+const renderPlain = e => [h('span', { class: e.ns ? 'dim' : '' }, e.name)];
+
+/* ---------------------------------------------------------------- reusable editors */
+function chipEditor({ values, kind, search, onChange, placeholder, single, fk }) {
+	const valid = v => kind === 'move' ? index.moves.has(toID(v)) : kind === 'ability' ? index.abilities.has(toID(v)) : kind === 'item' ? index.items.has(toID(v)) : true;
+	const wrap = h('div', { class: 'chips', onclick: e => { if (e.target === wrap) input.focus(); } });
+	for (const v of values) {
+		const mv = kind === 'move' ? index.moves.get(toID(v)) : null;
+		const bad = !valid(v);
+		wrap.append(h('span', { class: 'chip' + (bad ? ' bad' : mv ? ' typed' : ''), style: mv && !bad ? `background:${TYPE_COLORS[mv.type]}` : '', title: bad ? 'Not found in the dex' : '' },
+			v, h('button', { title: 'Remove', onclick: () => onChange(values.filter(x => x !== v)) }, '×')));
+	}
+	const input = h('input', { type: 'text', 'data-fk': fk, placeholder: (single && values.length) ? 'replace…' : placeholder, autocomplete: 'off', spellcheck: 'false' });
+	attachAC(input, search(values), v => {
+		if (single) return onChange([v]);
+		if (values.some(x => toID(x) === toID(v))) return;
+		onChange([...values, v]);
+	});
+	input.addEventListener('keydown', e => { if (e.key === 'Backspace' && !input.value && values.length) onChange(values.slice(0, -1)); });
+	wrap.append(input);
+	return wrap;
+}
+
+function finalStat(i, base, ev, iv, level, nature) {
+	if (!base) return '';
+	const e = Math.floor(ev / 4);
+	if (i === 0) return base === 1 ? 1 : Math.floor((2 * base + iv + e) * level / 100) + level + 10;
+	return Math.floor((Math.floor((2 * base + iv + e) * level / 100) + 5) * natureMult(nature, i));
+}
+
+function evEditor(spId, si, set, dex, level) {
+	if (!set.evs) {
+		return h('div', { class: 'default-box' },
+			h('span', {}, 'No EVs set — the generator uses 85 in every stat.'),
+			h('button', { onclick: () => editSet(spId, si, s => { s.evs = {}; }) }, 'Customize EVs'));
+	}
+	const total = STATS.reduce((n, st) => n + getStat(set.evs, st, 0), 0);
+	const setEV = (st, val) => editSet(spId, si, s => {
+		const cur = {};
+		for (const x of STATS) cur[x] = getStat(s.evs, x, 0);
+		cur[st] = Math.max(0, Math.min(252, Math.round(Number(val) || 0)));
+		const out = {};
+		for (const x of STATS) if (cur[x] > 0) out[x] = cur[x];
+		s.evs = out;
+	}, 'ev' + st);
+	const grid = h('div', { class: 'evs' }, h('span'), h('span'), h('span', { class: 'hd' }, 'EVs'), h('span', { class: 'hd', style: 'text-align:right' }, 'Base'), h('span', { class: 'hd', style: 'text-align:right' }, `Lv ${level}`));
+	STATS.forEach((st, i) => {
+		const ev = getStat(set.evs, st, 0);
+		const iv = getStat(set.ivs, st, 31);
+		const m = natureMult(set.nature, i);
+		const base = dex && dex.bs[i];
+		grid.append(
+			h('span', { class: 'st' + (m > 1 ? ' nat-up' : m < 1 ? ' nat-dn' : '') }, st + (m > 1 ? ' +' : m < 1 ? ' −' : '')),
+			h('input', { type: 'range', min: 0, max: 252, step: 4, value: ev, oninput: e => { e.target.nextSibling.value = e.target.value; }, onchange: e => setEV(st, e.target.value) }),
+			h('input', { type: 'number', min: 0, max: 252, step: 4, value: ev, 'data-fk': `ev-${si}-${st}`, onchange: e => setEV(st, e.target.value) }),
+			h('span', { class: 'bs' }, base || ''),
+			h('span', { class: 'fin' + (m > 1 ? ' nat-up' : m < 1 ? ' nat-dn' : '') }, finalStat(i, base, ev, iv, level, set.nature)),
+		);
+	});
+	return h('div', { class: 'field' },
+		grid,
+		h('div', { class: 'evtotal' },
+			h('span', {}, 'Total ', h('b', { class: total > 510 ? 'over' : total === 510 ? 'ok' : '' }, `${total} / 510`)),
+			h('span', { class: 'push', style: 'margin-left:auto' }),
+			h('button', { class: 'ghost', onclick: () => editSet(spId, si, s => { s.evs = {}; }) }, 'Zero all'),
+			h('button', { class: 'ghost', onclick: () => editSet(spId, si, s => { delete s.evs; }) }, 'Use default (85s)')),
+	);
+}
+
+function ivEditor(spId, si, set) {
+	const has = !!set.ivs;
+	const setIV = (st, val) => editSet(spId, si, s => {
+		const cur = {};
+		for (const x of STATS) cur[x] = getStat(s.ivs, x, 31);
+		cur[st] = Math.max(0, Math.min(31, Math.round(Number(val)) || 0));
+		const out = {};
+		for (const x of STATS) if (cur[x] !== 31) out[x] = cur[x];
+		if (Object.keys(out).length) s.ivs = out; else delete s.ivs;
+	}, 'iv' + st);
+	return h('details', { open: has },
+		h('summary', {}, has ? 'IVs (custom)' : 'IVs (all 31 — click to customize)'),
+		h('div', { style: 'display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px' },
+			STATS.map(st => h('label', { class: 'muted', style: 'font-size:11.5px;display:grid;gap:2px;text-align:center' }, st,
+				h('input', { type: 'number', min: 0, max: 31, value: getStat(set.ivs, st, 31), style: 'width:100%;text-align:center', onchange: e => setIV(st, e.target.value) })))));
+}
+
+/* ---------------------------------------------------------------- set card */
+function setCard(spId, spData, set, si, issues) {
+	const dex = index.species.get(spId);
+	const level = spData.level || 100;
+	const last = spData.sets.length - 1;
+	const move = (d) => mutate(() => { const a = data[spId].sets; [a[si], a[si + d]] = [a[si + d], a[si]]; });
+	const itemIsList = Array.isArray(set.item);
+	const itemVals = set.item == null || set.item === '' ? [] : itemIsList ? set.item : [set.item];
+	const setItem = vals => editSet(spId, si, s => {
+		if (!vals.length) delete s.item;
+		else if (itemIsList) s.item = vals;
+		else s.item = vals[0];
+	});
+	const abilitySuggest = () => (dex ? dex.abilities : []).map(a => ({ name: a, ns: 0 }));
+	const nat = set.nature;
+	const natKnown = !nat || index.natures.has(toID(nat));
+	const myIssues = issues.filter(x => x.set === si);
+
+	return h('div', { class: 'card' },
+		h('div', { class: 'card-head' },
+			h('span', { class: 'title' }, `Set ${si + 1}`, set.role ? h('span', { class: 'role-tag' }, set.role) : null),
+			h('button', { class: 'ghost', title: 'Move up', disabled: si === 0, onclick: () => move(-1) }, '↑'),
+			h('button', { class: 'ghost', title: 'Move down', disabled: si === last, onclick: () => move(1) }, '↓'),
+			h('button', { class: 'ghost', title: 'Duplicate set', onclick: () => mutate(() => { data[spId].sets.splice(si + 1, 0, clone(set)); }) }, 'Duplicate'),
+			h('button', { class: 'ghost danger', title: 'Delete set', onclick: () => { if (confirm(`Delete set ${si + 1}?`)) mutate(() => { data[spId].sets.splice(si, 1); }); } }, 'Delete')),
+		myIssues.length ? h('div', { class: 'issues' }, myIssues.map(x => h('div', { class: 'issue ' + x.level }, x.msg))) : null,
+		h('div', { class: 'field' }, h('label', {}, 'Role', h('span', { class: 'hint' }, 'label only — unused by the generator')),
+			h('input', { type: 'text', list: 'roles', value: set.role || '', 'data-fk': `role-${si}`, onchange: e => editSet(spId, si, s => { s.role = e.target.value.trim(); }, 'role') })),
+		h('div', { class: 'field' },
+			h('label', {}, 'Movepool', h('span', { class: 'hint' }, set.movepool && set.movepool.length > 4 ? `${set.movepool.length} moves — 4 chosen at random` : set.movepool && set.movepool.length ? `${set.movepool.length} moves — all used` : '')),
+			chipEditor({
+				values: set.movepool || [], kind: 'move', fk: `mv-${si}`, placeholder: 'add a move…',
+				search: vals => dexSearch(D.moves, renderMove, new Set(vals.map(toID))),
+				onChange: v => editSet(spId, si, s => { s.movepool = v; }),
+			})),
+		h('div', { class: 'field' },
+			h('label', {}, 'Abilities', h('span', { class: 'hint' }, 'one chosen at random')),
+			chipEditor({
+				values: set.abilities || [], kind: 'ability', fk: `ab-${si}`, placeholder: 'add an ability…',
+				search: vals => dexSearch(D.abilities, renderPlain, new Set(vals.map(toID)), () => abilitySuggest().filter(a => !vals.some(v => toID(v) === toID(a.name)))),
+				onChange: v => editSet(spId, si, s => { s.abilities = v; }),
+			})),
+		h('div', { class: 'field' },
+			h('label', {}, 'Tera types', h('span', { class: 'hint' }, 'one chosen at random · none = species’ first type')),
+			h('div', { class: 'pills' }, [...TERA_TYPES, ...(set.teraTypes || []).filter(t => !TERA_TYPES.includes(t))].map(t => {
+				const on = (set.teraTypes || []).includes(t);
+				return h('button', { class: 'pill' + (on ? ' on' : ''), style: `background:${TYPE_COLORS[t] || 'var(--bad)'}`, title: on ? 'Click to remove' : 'Click to add', onclick: () => editSet(spId, si, s => {
+					const cur = s.teraTypes || [];
+					const next = on ? cur.filter(x => x !== t) : [...cur, t];
+					if (next.length) s.teraTypes = next; else delete s.teraTypes;
+				}) }, t);
+			}))),
+		h('div', { class: 'two' },
+			h('div', { class: 'field' },
+				h('label', {}, 'Item', h('button', { class: 'ghost mode push', title: itemIsList ? 'Back to a single fixed item' : 'Pick randomly from several items', onclick: () => editSet(spId, si, s => {
+					if (itemIsList) { if (s.item.length) s.item = s.item[0]; else delete s.item; } else s.item = s.item ? [s.item] : [];
+				}) }, itemIsList ? '→ single item' : '→ random list')),
+				chipEditor({
+					values: itemVals, kind: 'item', fk: `it-${si}`, placeholder: itemIsList ? 'add an item…' : 'item…', single: !itemIsList,
+					search: vals => dexSearch(D.items, renderPlain, new Set(vals.map(toID))),
+					onChange: setItem,
+				})),
+			h('div', { class: 'field' },
+				h('label', {}, 'Nature'),
+				h('select', { value: nat || '', onchange: e => editSet(spId, si, s => { if (e.target.value) s.nature = e.target.value; else delete s.nature; }) },
+					h('option', { value: '' }, '— none (neutral)'),
+					!natKnown ? h('option', { value: nat }, `${nat} (unknown)`) : null,
+					D.natures.map(n => h('option', { value: n.name }, n.plus ? `${n.name}  (+${n.plus} −${n.minus})` : `${n.name}  (neutral)`))))),
+		h('div', { class: 'field' }, h('label', {}, 'Effort values'), evEditor(spId, si, set, dex, level)),
+		ivEditor(spId, si, set),
+	);
+}
+
+/* ---------------------------------------------------------------- species view */
+function speciesView() {
+	const id = selected;
+	const sp = data[id];
+	const dex = index.species.get(id);
+	const issues = issueMap.get(id) || [];
+	const view = h('div', {});
+	view.append(h('div', { class: 'sphead' },
+		spriteImg(dex, 'sprite'),
+		h('div', {}, h('h2', {}, dex ? dex.name : id), h('div', { class: 'id' }, id), dex ? h('div', { class: 'types' }, dex.types.map(typeBadge)) : null),
+		h('label', { class: 'lvl' }, 'Level', h('input', { type: 'number', min: 1, max: 100, value: sp.level ?? 100, onchange: e => mutate(() => { sp.level = Math.max(1, Math.min(100, Math.round(Number(e.target.value)) || 100)); }, id + ':level') })),
+		dex && dex.bs.length ? h('div', { class: 'bst', title: 'Base stats' }, STATS.map((st, i) => h('div', {}, st, h('b', {}, dex.bs[i]), h('i', { style: `width:${Math.min(100, dex.bs[i] / 2)}%;background:${dex.bs[i] >= 100 ? 'var(--good)' : dex.bs[i] >= 70 ? 'var(--accent)' : 'var(--warn)'}` })))) : null,
+		h('span', { class: 'grow' }),
+		h('button', { onclick: () => mutate(() => { sp.sets.push(defaultSet(id)); }) }, '+ Add set'),
+		h('button', { class: 'danger', onclick: () => { if (confirm(`Remove ${dex ? dex.name : id} and all ${sp.sets.length} of its sets?`)) mutate(() => { const keys = Object.keys(data); const at = keys.indexOf(id); delete data[id]; const rest = Object.keys(data); selected = rest[Math.min(at, rest.length - 1)] || null; }); } }, 'Remove species')));
+	const general = issues.filter(x => x.set == null);
+	if (general.length) view.append(h('div', { class: 'issues banner' }, general.map(x => h('div', { class: 'issue ' + x.level }, x.msg))));
+	view.append(h('div', { class: 'sets' }, sp.sets.map((s, i) => setCard(id, sp, s, i, issues))));
+	return view;
+}
+function spriteImg(dex, cls) {
+	const img = h('img', { class: cls, alt: '', loading: 'lazy', src: dex ? `https://play.pokemonshowdown.com/sprites/gen5/${dex.sprite}.png` : null });
+	img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+	return img;
+}
+function defaultSet(id) {
+	const dex = index.species.get(id);
+	const set = { role: 'filler', movepool: [], abilities: dex && dex.abilities.length ? [dex.abilities[0]] : [], item: 'Leftovers' };
+	if (dex) set.teraTypes = [dex.types[0]];
+	fixOrder(set);
+	return set;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+function visibleSpecies() {
+	let ids = Object.keys(data);
+	const q = filterText.trim().toLowerCase();
+	if (q) {
+		ids = ids.filter(id => {
+			const dex = index.species.get(id);
+			if ((dex ? dex.name : id).toLowerCase().includes(q) || id.includes(toID(q))) return true;
+			return data[id].sets.some(s => JSON.stringify([s.role, s.movepool, s.abilities, s.item, s.nature, s.teraTypes]).toLowerCase().includes(q));
+		});
+	}
+	if (sortMode === 'az') ids.sort((a, b) => ((index.species.get(a) || { name: a }).name).localeCompare((index.species.get(b) || { name: b }).name));
+	else if (sortMode === 'dex') ids.sort((a, b) => ((index.species.get(a) || { num: 1e9 }).num) - ((index.species.get(b) || { num: 1e9 }).num));
+	return ids;
+}
+function renderList() {
+	const list = $('#list');
+	if (!list) return;
+	const ids = visibleSpecies();
+	list.replaceChildren(...ids.map(id => {
+		const dex = index.species.get(id);
+		const iss = issueMap.get(id) || [];
+		const flag = iss.some(x => x.level === 'error') ? 'flag' : iss.length ? 'flag warn' : null;
+		return h('button', { class: 'sp' + (id === selected ? ' on' : ''), 'data-id': id, onclick: () => { selected = id; showRaw = false; scrollToSelected = false; try { localStorage.setItem('setEditor.selected', id); } catch (e) {} render(); } },
+			spriteImg(dex, ''), h('span', { class: 'nm' }, dex ? dex.name : id), h('span', { class: 'ct' }, data[id].sets.length), flag ? h('span', { class: flag, title: `${iss.length} issue(s)` }) : null);
+	}));
+	if (!ids.length) list.append(h('div', { class: 'muted', style: 'padding:14px' }, 'No matches.'));
+	const on = list.querySelector('.sp.on');
+	if (on && scrollToSelected && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+	scrollToSelected = false;
+	const total = Object.values(data).reduce((n, s) => n + s.sets.length, 0);
+	$('#sideFoot').textContent = `${Object.keys(data).length} species · ${total} sets` + (ids.length !== Object.keys(data).length ? ` · ${ids.length} shown` : '');
+}
+
+/* ---------------------------------------------------------------- add species modal */
+function addSpeciesModal() {
+	const input = h('input', { type: 'text', placeholder: 'Search the Pokédex…', autocomplete: 'off', spellcheck: 'false' });
+	const close = () => back.remove();
+	const back = h('div', { class: 'modal-back', onmousedown: e => { if (e.target === back) close(); } },
+		h('div', { class: 'modal' }, h('h3', {}, 'Add species'), input,
+			h('div', { class: 'muted', style: 'font-size:12px' }, 'Creates the species with one starter set. Species already in the file are hidden.'),
+			h('div', { style: 'display:flex;justify-content:flex-end' }, h('button', { onclick: close }, 'Cancel'))));
+	document.body.append(back);
+	attachAC(input, q => {
+		if (!q) return [];
+		const res = searchDex(D.species, q, new Set(Object.keys(data).map(toID)));
+		return res.map(e => ({ value: e.id, node: () => [spriteImg(e, 'sprite'), h('span', { class: e.ns ? 'dim' : '' }, e.name), h('span', { class: 'sub' }, e.types.join(' / '))] }));
+	}, id => {
+		close();
+		mutate(() => { data[id] = { level: 100, sets: [defaultSet(id)] }; selected = id; filterText = ''; $('#search').value = ''; scrollToSelected = true; });
+	});
+	input.focus();
+}
+
+/* ---------------------------------------------------------------- chrome + render */
+function renderShell() {
+	const app = $('#app');
+	if (!data) {
+		app.style.display = 'block';
+		app.replaceChildren(welcome());
+		return;
+	}
+	if ($('#list')) return;
+	app.style.display = '';
+	const search = h('input', { id: 'search', type: 'search', placeholder: 'Search species, moves, items…', autocomplete: 'off', value: filterText,
+		oninput: e => { filterText = e.target.value; renderList(); },
+		onkeydown: e => {
+			if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+			const ids = visibleSpecies();
+			if (!ids.length) return;
+			e.preventDefault();
+			const at = ids.indexOf(selected);
+			selected = ids[Math.max(0, Math.min(ids.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+			showRaw = false; scrollToSelected = true; render();
+		} });
+	app.replaceChildren(
+		h('aside', { class: 'side' },
+			h('div', { class: 'side-head' },
+				h('div', { class: 'row' }, search, h('button', { title: 'Add a species', onclick: addSpeciesModal }, '+ Add')),
+				h('select', { id: 'sort', onchange: e => { sortMode = e.target.value; renderList(); } },
+					h('option', { value: 'file' }, 'Sort: file order'), h('option', { value: 'az' }, 'Sort: A → Z'), h('option', { value: 'dex' }, 'Sort: Pokédex #'))),
+			h('div', { class: 'list', id: 'list' }),
+			h('div', { class: 'side-foot', id: 'sideFoot' })),
+		h('main', { class: 'main', id: 'main' }));
+	$('#sort').value = sortMode;
+}
+function render() {
+	renderShell();
+	if (!data) return renderChrome();
+	issueMap = validateAll();
+	if (!selected || !data[selected]) selected = Object.keys(data)[0] || null;
+	const active = document.activeElement;
+	const fk = active && active.dataset ? active.dataset.fk : null;
+	const caret = fk && active.selectionStart != null && active.type === 'text' ? active.selectionStart : null;
+	const main = $('#main');
+	const top = main.scrollTop;
+	renderList();
+	const roles = [...new Set(Object.values(data).flatMap(s => s.sets.map(x => x.role).filter(Boolean)))].sort();
+	$('#roles').replaceChildren(...roles.map(r => h('option', { value: r })));
+	if (showRaw) main.replaceChildren(rawView());
+	else if (selected) main.replaceChildren(speciesView());
+	else main.replaceChildren(h('div', { class: 'welcome' }, h('p', { class: 'muted' }, 'The file has no species yet.'), h('button', { class: 'primary', onclick: addSpeciesModal }, '+ Add species')));
+	main.scrollTop = top;
+	if (fk) {
+		const el = main.querySelector(`[data-fk="${fk}"]`);
+		if (el) { el.focus(); if (caret != null && el.setSelectionRange) try { el.setSelectionRange(caret, caret); } catch (e) {} }
+	}
+	renderChrome();
+}
+function renderChrome() {
+	const dirty = isDirty();
+	$('#fileLabel').textContent = data ? (fileName + (mode === 'server' ? ' (live)' : '')) : '';
+	const errs = data ? countIssues('error') : 0, warns = data ? countIssues('warn') : 0;
+	$('#status').replaceChildren(...(data ? [
+		h('span', { class: 'dot' + (dirty ? ' dirty' : '') }), dirty ? 'Unsaved changes' : 'Saved',
+		errs ? h('span', { style: 'color:var(--bad)' }, `· ${errs} error${errs > 1 ? 's' : ''}`) : null,
+		warns ? h('span', { style: 'color:var(--warn)' }, `· ${warns} warning${warns > 1 ? 's' : ''}`) : null,
+	].filter(Boolean) : []));
+	$('#btnUndo').disabled = !past.length;
+	$('#btnRedo').disabled = !future.length;
+	$('#btnSave').disabled = !data;
+	$('#btnRaw').disabled = !data;
+	$('#btnRaw').style.borderColor = showRaw ? 'var(--accent)' : '';
+	$('#btnSave').textContent = mode === 'upload' ? 'Download' : 'Save';
+}
+function rawView() {
+	const text = serialize(data);
+	return h('div', {}, h('div', { class: 'sphead' }, h('h2', {}, 'JSON preview'), h('span', { class: 'muted' }, 'This is exactly what Save writes.'), h('span', { class: 'grow' }),
+		h('button', { onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied', 'good'), () => toast('Copy failed', 'error')) }, 'Copy'),
+		h('button', { onclick: () => { showRaw = false; render(); } }, 'Back to editor')), h('pre', { class: 'raw' }, text));
+}
+
+/* ---------------------------------------------------------------- loading / saving */
+function welcome() {
+	const drop = h('div', { class: 'drop' },
+		h('p', { style: 'margin:0 0 12px;font-size:16px;font-weight:600' }, 'Drop a sets.json here'),
+		h('button', { class: 'primary', onclick: openFile }, 'Open sets.json…'));
+	['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+	['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+	drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) f.text().then(t => loadText(t, f.name, 'upload')); });
+	return h('div', { class: 'welcome' }, h('h2', { style: 'margin:0' }, 'Pokémon Showdown set editor'), drop,
+		h('p', { class: 'muted', style: 'margin:0' }, 'To edit the repo file in place, run ', h('code', {}, 'node tools/set-editor/server.mjs'), ' and open the printed address.'));
+}
+function loadText(text, name, how, handle) {
+	let parsed;
+	try { parsed = JSON.parse(text); } catch (e) { return toast('Not valid JSON: ' + e.message, 'error'); }
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return toast('Expected an object of species → { level, sets }.', 'error');
+	for (const [id, sp] of Object.entries(parsed)) {
+		if (!sp || typeof sp !== 'object' || !Array.isArray(sp.sets)) return toast(`"${id}" doesn't look like { level, sets: [...] }.`, 'error');
+	}
+	data = parsed; baseline = serialize(data); fileName = name; mode = how; fsHandle = handle || null;
+	past = []; future = []; lastKey = null; showRaw = false; filterText = '';
+	let saved = null;
+	try { saved = localStorage.getItem('setEditor.selected'); } catch (e) {}
+	selected = data[saved] ? saved : Object.keys(data)[0] || null;
+	scrollToSelected = true;
+	const app = $('#app'); app.replaceChildren();
+	render();
+}
+async function openFile() {
+	if (window.showOpenFilePicker) {
+		try {
+			const [handle] = await window.showOpenFilePicker({ types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }] });
+			const f = await handle.getFile();
+			return loadText(await f.text(), f.name, 'fs', handle);
+		} catch (e) { if (e.name === 'AbortError') return; }
+	}
+	$('#filePick').click();
+}
+async function save() {
+	if (!data) return;
+	const errs = countIssues('error');
+	if (errs && !confirm(`There ${errs === 1 ? 'is 1 error' : 'are ' + errs + ' errors'} in the sets (see the red markers). Save anyway?`)) return;
+	const text = serialize(data);
+	try {
+		if (mode === 'server') {
+			const r = await fetch('/api/sets', { method: 'PUT', headers: { 'X-Set-Editor': '1', 'Content-Type': 'application/json' }, body: text });
+			if (!r.ok) throw new Error(await r.text());
+			toast('Saved ' + fileName, 'good');
+		} else if (mode === 'fs' && fsHandle) {
+			const w = await fsHandle.createWritable();
+			await w.write(text); await w.close();
+			toast('Saved ' + fileName, 'good');
+		} else {
+			const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/json' })), download: fileName || 'sets.json' });
+			document.body.append(a); a.click(); a.remove();
+			toast(`Downloaded ${fileName || 'sets.json'} — replace the file in your repo`, 'good');
+		}
+		baseline = text;
+	} catch (e) { toast('Save failed: ' + e.message, 'error'); }
+	renderChrome();
+}
+
+/* ---------------------------------------------------------------- wiring */
+$('#btnUndo').onclick = undo;
+$('#btnRedo').onclick = redo;
+$('#btnSave').onclick = save;
+$('#btnOpen').onclick = openFile;
+$('#btnRaw').onclick = () => { showRaw = !showRaw; render(); };
+$('#filePick').onchange = e => { const f = e.target.files[0]; if (f) f.text().then(t => loadText(t, f.name, 'upload')); e.target.value = ''; };
+document.addEventListener('keydown', e => {
+	const mod = e.ctrlKey || e.metaKey;
+	if (!mod) return;
+	const k = e.key.toLowerCase();
+	if (k === 's') { e.preventDefault(); save(); }
+	else if (k === 'z' || k === 'y') {
+		const a = document.activeElement;
+		if (a && a.tagName === 'INPUT' && a.type === 'text' && a.value) return; // let the browser undo typing
+		e.preventDefault();
+		if (k === 'y' || e.shiftKey) redo(); else undo();
+	}
+});
+window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+(async function boot() {
+	renderChrome();
+	renderShell();
+	try {
+		const r = await fetch('/api/sets');
+		if (r.ok) {
+			const j = await r.json();
+			return loadText(j.text, j.file, 'server');
+		}
+	} catch (e) { /* not served by server.mjs */ }
+})();
+</script>
+</body>
+</html>
