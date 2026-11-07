@@ -40,6 +40,15 @@ interface SpeciesData {
 const STATS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'] as const;
 const DEFAULT_LEVEL = 100;
 
+/**
+ * Picks the sets file for a format from the format's `team` value (see config/formats.ts).
+ * Every other format uses sets.json.
+ */
+function loadSets(team: string | undefined): [string, { [species: string]: SpeciesData }] {
+	if (team === 'randomMetronome1v1') return ['metronome_sets.json', require('./metronome_sets.json')];
+	return ['sets.json', require('./sets.json')];
+}
+
 export class RandomTeams {
 	readonly dex: ModdedDex;
 	gen: number;
@@ -50,10 +59,13 @@ export class RandomTeams {
 	readonly maxMoveCount: number;
 	readonly forceTeraType: string | undefined;
 
-	randomSets: { [species: string]: SpeciesData } = require('./sets.json');
+	/** Name of the sets file in use, for error messages. */
+	readonly setsFile: string;
+	randomSets: { [species: string]: SpeciesData };
 
 	constructor(format: Format | string, prng: PRNG | PRNGSeed | null) {
 		format = Dex.formats.get(format);
+		[this.setsFile, this.randomSets] = loadSets(format.team);
 		this.dex = Dex.forFormat(format);
 		this.gen = this.dex.gen;
 
@@ -74,7 +86,8 @@ export class RandomTeams {
 	}
 
 	getTeam(options: PlayerOptions | null = null): PokemonSet[] {
-		return this.randomTeam();
+		// Every set built here has all six EVs/IVs and a nature filled in, which is what PokemonSet requires.
+		return this.randomTeam() as unknown as PokemonSet[];
 	}
 
 	sample<T>(items: readonly T[]): T {
@@ -100,13 +113,17 @@ export class RandomTeams {
 
 	randomTeam(): RandomTeamsTypes.RandomSet[] {
 		const pool = Object.keys(this.randomSets);
+		if (!pool.length) {
+			throw new Error(`${this.setsFile} has no sets yet, so ${this.format.name} cannot make teams. ` +
+				`Add some (for example with tools/set-editor).`);
+		}
 		const team: RandomTeamsTypes.RandomSet[] = [];
 		const usedBaseSpecies = new Set<string>();
 
 		while (team.length < this.maxTeamSize && pool.length) {
 			const id = this.sampleNoReplace(pool);
 			const species = this.dex.species.get(id);
-			if (!species.exists) throw new Error(`sets.json: unknown species "${id}"`);
+			if (!species.exists) throw new Error(`${this.setsFile}: unknown species "${id}"`);
 			// Species Clause
 			if (usedBaseSpecies.has(species.baseSpecies)) continue;
 			usedBaseSpecies.add(species.baseSpecies);
@@ -118,9 +135,9 @@ export class RandomTeams {
 
 	randomSet(species: Species): RandomTeamsTypes.RandomSet {
 		const data = this.randomSets[species.id];
-		if (!data?.sets?.length) throw new Error(`sets.json: "${species.id}" has no sets`);
+		if (!data?.sets?.length) throw new Error(`${this.setsFile}: "${species.id}" has no sets`);
 		const set = this.sample(data.sets);
-		const where = `sets.json: ${species.id}`;
+		const where = `${this.setsFile}: ${species.id}`;
 
 		// Moves: all of them, or a random selection if the movepool is bigger than the move limit
 		const movePool = set.movepool.map(name => {

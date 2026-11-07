@@ -1666,7 +1666,8 @@ export class GlobalRoomState {
 				player.setStatusType('online');
 			}
 		}
-		if (Config.reportbattles) {
+		// Battles against the computer aren't announced: the report needs two real players, and /autoplay would spam it
+		if (Config.reportbattles && !options.computer) {
 			if (typeof Config.reportbattles === 'string') {
 				Config.reportbattles = [Config.reportbattles];
 			} else if (Config.reportbattles === true) {
@@ -2201,7 +2202,8 @@ export const Rooms = {
 	 * No need for UI; this function sends popups to users.
 	 */
 	createBattle(options: RoomBattleOptions & Partial<RoomSettings>) {
-		const players = options.players.map(player => player.user);
+		// Computer players (see room-battle.ts) have no user
+		const players = options.players.map(player => player.user).filter((user): user is User => !!user);
 		const format = Dex.formats.get(options.format);
 		if (players.length > format.playerCount) {
 			throw new Error(`${players.length} players were provided, but the format is a ${format.playerCount}-player format.`);
@@ -2253,10 +2255,9 @@ export const Rooms = {
 		// options.rated < 0 or falsy means "unrated", and will be converted to 0 here
 		// options.rated === true is converted to 1 (used in tests sometimes)
 		options.rated = Math.max(+options.rated! || 0, 0);
-		const p1 = players[0];
-		const p2 = players[1];
-		const p1name = p1 ? p1.name : "Player 1";
-		const p2name = p2 ? p2.name : "Player 2";
+		const playerName = (i: number) => options.players[i]?.user?.name || options.players[i]?.name || `Player ${i + 1}`;
+		const p1name = playerName(0);
+		const p2name = playerName(1);
 		let roomTitle;
 		let roomid = options.roomid;
 		if (format.gameType === 'multi') {

@@ -22,3 +22,9 @@ After adding moves/items/abilities/species to `data/`, refresh the autocomplete 
 ```
 node tools/set-editor/build-data.mts
 ```
+
+The Metronome 1v1 format reads its own file, which starts empty. To edit it:
+
+```
+node tools/set-editor/server.mjs data/random-battles/gen9/metronome_sets.json
+```
