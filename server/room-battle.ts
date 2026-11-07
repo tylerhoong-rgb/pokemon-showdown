@@ -14,6 +14,8 @@
 import { execSync } from "child_process";
 import { ProcessManager, type Streams } from '../lib';
 import { BattleStream } from "../sim/battle-stream";
+import { PRNG } from "../sim/prng";
+import { chooseComputerAction, COMPUTER_CHOICE_DELAY_MS } from "./battle-bot";
 import { RoomGamePlayer, RoomGame } from "./room-game";
 import * as ConfigLoader from './config-loader';
 import type { Tournament } from './tournaments/index';
@@ -115,6 +117,8 @@ export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 	 * in which case players will need to bring their own team.
 	 */
 	hasTeam: boolean;
+	/** Are this player's moves chosen by the server (see server/battle-bot.ts)? */
+	computer = false;
 	constructor(user: User | string | null, game: RoomBattle, num: PlayerIndex) {
 		super(user, game, num);
 		if (typeof user === 'string') user = null;
@@ -462,7 +466,15 @@ export class RoomBattleTimer {
 }
 
 export interface RoomBattlePlayerOptions {
-	user: User;
+	/** null only for a computer player that has no user behind it (see `computer` and `name`) */
+	user: User | null;
+	/** Name shown for a player that has no user. */
+	name?: string;
+	/**
+	 * The server chooses this player's moves. With `user: null` this is a computer opponent;
+	 * with a `user`, that user's own moves are chosen automatically too.
+	 */
+	computer?: boolean;
 	/** should be '' for random teams */
 	team?: string;
 	rating?: number;
@@ -588,8 +600,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		for (let i = 0; i < this.playerCap; i++) {
 			const p = options.players[i];
-			const player = this.addPlayer(p?.user || null, p || null);
+			const player = this.addPlayer(p?.user || p?.name || null, p || null);
 			if (!player) throw new Error(`failed to create player ${i + 1} in ${room.roomid}`);
+			if (p?.computer) {
+				player.computer = true;
+				// With no user behind it, a computer player is always "connected", so the timer never counts it as gone
+				if (!p.user) player.active = true;
+			}
 		}
 		if (options.inputLog) {
 			let scanIndex = 0;
@@ -665,7 +682,9 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return false;
 		}
 
-		const validSlots = this.players.filter(player => !player.id && !player.eliminated).map(player => player.slot);
+		const validSlots = this.players.filter(
+			player => !player.id && !player.eliminated && !player.computer
+		).map(player => player.slot);
 
 		if (slot && !validSlots.includes(slot)) {
 			if (this[slot]?.eliminated) {
@@ -814,6 +833,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 				this.requestCount++;
 				player?.sendRoom(`|request|${requestJSON}`);
 				if (!request.update) this.timer.nextRequest(player);
+				if (player?.computer) this.chooseForComputer(player, request);
 				break;
 			}
 			player?.sendRoom(lines[2]);
@@ -838,6 +858,22 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			void this.end(this.logData!.winner);
 			break;
 		}
+	}
+	/** Used to make the computer's choices. Not seeded: the battle itself is seeded separately. */
+	private readonly computerPRNG = new PRNG();
+	/** Answers a request for a computer-controlled player (see server/battle-bot.ts). */
+	chooseForComputer(player: RoomBattlePlayer, request: AnyObject) {
+		const choice = chooseComputerAction(request, this.computerPRNG);
+		if (!choice) return;
+		const rqid = player.request.rqid;
+		const delay = Config.computerchoicedelay ?? COMPUTER_CHOICE_DELAY_MS;
+		setTimeout(() => {
+			// The battle may have ended, or the request been replaced, while we were waiting
+			if (this.ended || !this.room || player.request.rqid !== rqid) return;
+			player.request.isWait = true;
+			player.request.choice = choice;
+			void this.stream.write(`>${player.slot} ${choice}`);
+		}, delay);
 	}
 	end(winnerName: unknown) {
 		if (this.ended) return;
@@ -1218,13 +1254,17 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		const delayStart = this.options.delayedStart || !!this.options.inputLog;
 		const users = this.players.map(player => {
 			const user = player.getUser();
-			if (!user && !delayStart) {
+			if (!user && !delayStart && !player.computer) {
 				throw new Error(`User ${player.id} not found on ${this.roomid} battle creation`);
 			}
 			return user;
 		});
 		if (!delayStart) {
-			Rooms.global.onCreateBattleRoom(users as User[], this.room, { rated: this.rated });
+			// Computer players have no user
+			Rooms.global.onCreateBattleRoom(users.filter(Boolean) as User[], this.room, {
+				rated: this.rated,
+				computer: this.players.some(player => player.computer),
+			});
 			this.started = true;
 		} else if (delayStart === 'multi') {
 			this.room.add(`|uhtml|invites|<div class="broadcast broadcast-blue"><strong>This is a 4-player challenge battle</strong><br />The players will need to add more players before the battle can start.</div>`);
