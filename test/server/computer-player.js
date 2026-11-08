@@ -7,6 +7,8 @@
 const assert = require('assert').strict;
 
 const { makeUser } = require('../users-utils');
+const { chooseComputerAction } = require('../../server/battle-bot');
+const { PRNG } = require('../../sim/prng');
 
 const PACKED_TEAM = 'Weavile||lifeorb||swordsdance,knockoff,iceshard,iciclecrash|Jolly|,252,,,4,252|||||';
 const FORMAT = 'gen9customgame';
@@ -107,5 +109,45 @@ describe('Computer players', function () {
 		});
 		assert.equal(room.battle.p2.active, true);
 		assert.equal(room.battle.p2.knownActive, true);
+	});
+
+	describe('turn 1 choices', () => {
+		const request = (details, active) => ({
+			side: { pokemon: [{ details, condition: '100/100' }] },
+			active: [{ moves: [{ move: 'Tackle' }, { move: 'Growl' }], ...active }],
+		});
+		const choices = (req, n = 200) => new Set(Array.from({ length: n }, (_, i) => chooseComputerAction(req, new PRNG([i, 2, 3, 4]))));
+
+		it('should always Mega Evolve when it can', () => {
+			for (const choice of choices(request('Charizard, L100', { canMegaEvo: true, canTerastallize: 'Fire' }))) {
+				assert(choice.endsWith(' mega'), choice);
+			}
+		});
+
+		it('should never Terastallize a Pokemon that can Mega Evolve, even after it has', () => {
+			const megaed = request('Charizard-Mega-Y, L100, M', { canTerastallize: 'Fire' });
+			for (const choice of choices(megaed)) assert(/^move \d$/.test(choice), choice);
+			for (const choice of choices(request('Charizard, L100', { canMegaEvo: true, canTerastallize: 'Fire' }))) {
+				assert(!choice.includes('terastallize'), choice);
+			}
+		});
+
+		it('should always Terastallize Ogerpon (any mask) when it can', () => {
+			for (const details of ['Ogerpon, L100, F', 'Ogerpon-Wellspring, L100, F', 'Ogerpon-Hearthflame, L100, F']) {
+				for (const choice of choices(request(details, { canTerastallize: 'Grass' }))) {
+					assert(choice.endsWith(' terastallize'), `${details}: ${choice}`);
+				}
+			}
+		});
+
+		it('should still Terastallize other Pokemon only some of the time', () => {
+			const seen = choices(request('Weavile, L100, M', { canTerastallize: 'Dark' }));
+			assert([...seen].some(c => c.endsWith(' terastallize')));
+			assert([...seen].some(c => !c.endsWith(' terastallize')));
+		});
+
+		it('should not try to Terastallize or Mega Evolve when it cannot', () => {
+			for (const choice of choices(request('Ogerpon, L100, F', {}))) assert(/^move \d$/.test(choice), choice);
+		});
 	});
 });
