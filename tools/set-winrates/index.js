@@ -17,6 +17,7 @@
 const child_process = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -38,6 +39,8 @@ const USAGE = `Usage: node tools/set-winrates [options]
                   every player brings exactly one Pokemon.
   --sets FILE     Test the sets in FILE instead of the format's own sets file.
   --records FILE  Keep the records in FILE (default logs/set-winrates/<format>.json).
+  --workers N     Play on N threads at once (default: one per CPU, ${os.availableParallelism()} here). Use 1 for a
+                  single thread. The results for a given --seed are the same whatever N is.
   --seed N        Make the pairings and battles repeatable.
   --no-build      Don't rebuild first. Only safe if you haven't touched the sets or the code.
   --help          Show this message.
@@ -271,12 +274,34 @@ function packTeam(sim, format, entry, seed) {
 
 const randomSeed = prng => [prng.random(65536), prng.random(65536), prng.random(65536), prng.random(65536)];
 
+/**
+ * Everything one battle needs, drawn up front by the main thread: which two sets play (indexes into the entries)
+ * and every random seed. A job is self-contained, so it plays out the same on any worker, in any order, which is
+ * what keeps `--seed` results identical however many workers there are.
+ */
+function makeJob(prng, entryCount) {
+	return {
+		first: prng.random(entryCount),
+		second: prng.random(entryCount),
+		seeds: { firstTeam: randomSeed(prng), secondTeam: randomSeed(prng), battle: randomSeed(prng), bot: randomSeed(prng) },
+	};
+}
+
+/** Plays one job. Returns { winner, timedOut } (winner is 0, 1, or null for a tie) and throws if the battle breaks. */
+async function playJob(sim, format, entries, job) {
+	const teams = [
+		packTeam(sim, format, entries[job.first], job.seeds.firstTeam),
+		packTeam(sim, format, entries[job.second], job.seeds.secondTeam),
+	];
+	return playGame(sim, format.id, teams, job.seeds);
+}
+
 /** Plays one battle between two packed teams with the computer player on both sides. */
-async function playGame(sim, formatId, teams, prng) {
+async function playGame(sim, formatId, teams, seeds) {
 	const stream = new sim.BattleStream();
-	const botPRNG = new sim.PRNG(randomSeed(prng));
+	const botPRNG = new sim.PRNG(seeds.bot);
 	void stream.write([
-		`>start ${JSON.stringify({ formatid: formatId, seed: randomSeed(prng) })}`,
+		`>start ${JSON.stringify({ formatid: formatId, seed: seeds.battle })}`,
 		`>player p1 ${JSON.stringify({ name: 'Left', team: teams[0] })}`,
 		`>player p2 ${JSON.stringify({ name: 'Right', team: teams[1] })}`,
 	].join('\n'));
@@ -315,39 +340,124 @@ async function playGame(sim, formatId, teams, prng) {
 	return { winner, timedOut: false };
 }
 
+/** Battles per message to a worker: big enough that messaging costs nothing, small enough to stop promptly. */
+const BATCH_SIZE = 20;
+/** Don't start a worker for fewer battles than this; each one takes a moment to load the simulator. */
+const MIN_GAMES_PER_WORKER = 50;
+
+/**
+ * Starts `count` worker threads (see worker.js), each with its own copy of the simulator, and returns a function
+ * that plays a batch of jobs on whichever worker is free, plus a way to shut them all down.
+ */
+function startPool(count, formatId, entries) {
+	const { Worker } = require('worker_threads');
+	const plain = entries.map(({ speciesId, level, set }) => ({ speciesId, level, set }));
+	const idle = [];
+	const all = [];
+	for (let i = 0; i < count; i++) {
+		const worker = new Worker(path.join(__dirname, 'worker.js'), { workerData: { formatId, entries: plain } });
+		const slot = { worker, pending: null };
+		const fail = err => {
+			const pending = slot.pending;
+			slot.pending = null;
+			if (pending) pending.reject(err instanceof Error ? err : new Error(String(err)));
+		};
+		worker.on('message', message => {
+			const pending = slot.pending;
+			slot.pending = null;
+			idle.push(slot);
+			if (pending) pending.resolve(message.results);
+		});
+		worker.on('error', fail);
+		worker.on('exit', code => fail(new Error(`a worker stopped unexpectedly (exit code ${code})`)));
+		idle.push(slot);
+		all.push(slot);
+	}
+	return {
+		/** Callers never have more batches in flight than there are workers, so one is always free. */
+		run(jobs) {
+			const slot = idle.pop();
+			return new Promise((resolve, reject) => {
+				slot.pending = { resolve, reject };
+				slot.worker.postMessage({ jobs });
+			});
+		},
+		close: () => Promise.all(all.map(slot => slot.worker.terminate())),
+	};
+}
+
 /**
  * Plays `games` battles between random pairs of sets (both drawn evenly from every set, so each set faces the same
  * field and both sides of every battle are recorded), saving the records as it goes.
+ *
+ * With `workers` above 1 the battles are played on that many threads. Every pairing and seed is still drawn here, so
+ * for a given `prng` the records come out the same whatever the number of workers.
  */
-async function runGames({ sim, format, entries, records, recordsFile, games, prng, onProgress, shouldStop }) {
-	const stats = { played: 0, timedOut: 0, failed: 0, firstError: null };
-	let failuresInARow = 0;
-	for (let i = 0; i < games && !(shouldStop && shouldStop()); i++) {
-		// The battles are driven entirely by promises, which never give the event loop a turn. Without this,
-		// Ctrl+C (and anything else waiting on the event loop) would never be noticed.
-		await new Promise(resolve => setImmediate(resolve));
-		const first = entries[prng.random(entries.length)];
-		const second = entries[prng.random(entries.length)];
-		try {
-			const teams = [
-				packTeam(sim, format, first, randomSeed(prng)),
-				packTeam(sim, format, second, randomSeed(prng)),
-			];
-			const result = await playGame(sim, format.id, teams, prng);
-			applyGame(records, first, second, result.winner);
-			stats.played++;
-			if (result.timedOut) stats.timedOut++;
-			failuresInARow = 0;
-		} catch (err) {
-			stats.failed++;
-			stats.firstError ??= err;
-			if (++failuresInARow > 10) throw err;
-			continue;
+async function runGames({ sim, format, entries, records, recordsFile, games, prng, workers = 1, onProgress, shouldStop }) {
+	const concurrency = Math.max(1, Math.min(workers, Math.ceil(games / MIN_GAMES_PER_WORKER)));
+	const pool = concurrency > 1 ? startPool(concurrency, format.id, entries) : null;
+	const plainEntries = entries;
+	const playBatch = pool ? jobs => pool.run(jobs) : async jobs => {
+		const results = [];
+		for (const job of jobs) {
+			// The battles are driven entirely by promises, which never give the event loop a turn. Without this,
+			// Ctrl+C (and anything else waiting on the event loop) would never be noticed.
+			await new Promise(resolve => setImmediate(resolve));
+			try {
+				results.push(await playJob(sim, format, plainEntries, job));
+			} catch (err) {
+				results.push({ error: String(err.stack || err) });
+			}
 		}
-		if (stats.played % SAVE_EVERY === 0) saveRecords(recordsFile, records);
-		if (onProgress) onProgress(stats.played, games);
+		return results;
+	};
+
+	const stats = { played: 0, timedOut: 0, failed: 0, firstError: null, workers: concurrency };
+	let issued = 0;
+	let lastSaved = 0;
+	let failuresInARow = 0;
+	const inFlight = new Set();
+	const launch = () => {
+		while (inFlight.size < concurrency && issued < games && !(shouldStop && shouldStop())) {
+			// Smaller batches near the end so that no worker is left doing a big one alone
+			const size = Math.max(1, Math.min(BATCH_SIZE, Math.ceil((games - issued) / concurrency)));
+			const jobs = Array.from({ length: size }, () => makeJob(prng, entries.length));
+			issued += size;
+			const batch = { jobs };
+			batch.done = playBatch(jobs).then(results => ({ batch, results }));
+			inFlight.add(batch.done);
+		}
+	};
+
+	try {
+		launch();
+		while (inFlight.size) {
+			const { batch, results } = await Promise.race(inFlight);
+			inFlight.delete(batch.done);
+			for (const [i, result] of results.entries()) {
+				if (result.error) {
+					stats.failed++;
+					stats.firstError ??= new Error(result.error);
+					if (++failuresInARow > 10) throw stats.firstError;
+					continue;
+				}
+				failuresInARow = 0;
+				applyGame(records, entries[batch.jobs[i].first], entries[batch.jobs[i].second], result.winner);
+				stats.played++;
+				if (result.timedOut) stats.timedOut++;
+			}
+			if (stats.played - lastSaved >= SAVE_EVERY) {
+				saveRecords(recordsFile, records);
+				lastSaved = stats.played;
+			}
+			if (onProgress) onProgress(stats.played, games);
+			launch();
+		}
+	} finally {
+		// Even if something broke part way, keep every battle that was counted
+		saveRecords(recordsFile, records);
+		if (pool) await pool.close();
 	}
-	saveRecords(recordsFile, records);
 	return stats;
 }
 
@@ -356,7 +466,10 @@ async function runGames({ sim, format, entries, records, recordsFile, games, prn
 // ---------------------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-	const opts = { games: null, report: false, reset: false, format: DEFAULT_FORMAT, sets: null, records: null, seed: null, build: true, help: false };
+	const opts = {
+		games: null, report: false, reset: false, format: DEFAULT_FORMAT, sets: null, records: null,
+		seed: null, workers: os.availableParallelism(), build: true, help: false,
+	};
 	const positiveInt = (flag, value) => {
 		if (!/^\d+$/.test(value || '') || Number(value) < 1) throw new UsageError(`${flag} needs a whole number of at least 1.`);
 		return Number(value);
@@ -366,6 +479,7 @@ function parseArgs(argv) {
 		switch (arg) {
 		case '--games': opts.games = positiveInt(arg, argv[++i]); break;
 		case '--seed': opts.seed = positiveInt(arg, argv[++i]); break;
+		case '--workers': opts.workers = positiveInt(arg, argv[++i]); break;
 		case '--format': opts.format = argv[++i] || ''; break;
 		case '--sets': opts.sets = argv[++i] || ''; break;
 		case '--records': opts.records = argv[++i] || ''; break;
@@ -451,24 +565,27 @@ async function main(argv) {
 		let stopRequested = false;
 		process.once('SIGINT', () => {
 			stopRequested = true;
-			console.log('\nStopping after the current battle (press Ctrl+C again to quit immediately)...');
+			console.log('\nStopping after the battles in progress (press Ctrl+C again to quit immediately)...');
 		});
 		const start = Date.now();
 		const interactive = process.stdout.isTTY;
+		let lastPrinted = 0;
 		console.log(`Playing ${games} battles across ${entries.length} sets in ${format.name}...`);
 		const stats = await runGames({
-			sim, format, entries, records, recordsFile, games, prng,
+			sim, format, entries, records, recordsFile, games, prng, workers: opts.workers,
 			shouldStop: () => stopRequested,
 			onProgress: (played, total) => {
-				if (interactive ? played % 10 === 0 : played % 250 === 0) {
-					const rate = played / ((Date.now() - start) / 1000);
-					const text = `  ${played}/${total} battles (${rate.toFixed(1)}/s)`;
-					if (interactive) process.stdout.write(`\r${text}  `); else console.log(text);
-				}
+				const now = Date.now();
+				if (now - lastPrinted < (interactive ? 200 : 10000) && played < total) return;
+				lastPrinted = now;
+				const text = `  ${played}/${total} battles (${(played / ((now - start) / 1000)).toFixed(1)}/s)`;
+				if (interactive) process.stdout.write(`\r${text}  `); else console.log(text);
 			},
 		});
 		if (interactive) process.stdout.write('\r' + ' '.repeat(50) + '\r');
-		console.log(`Played ${stats.played} battles in ${((Date.now() - start) / 1000).toFixed(1)}s.`);
+		const seconds = (Date.now() - start) / 1000;
+		console.log(`Played ${stats.played} battles in ${seconds.toFixed(1)}s ` +
+			`(${(stats.played / seconds).toFixed(0)}/s on ${stats.workers} thread${stats.workers === 1 ? '' : 's'}).`);
 		if (stats.timedOut) console.log(`${stats.timedOut} hit the ${TURN_LIMIT}-turn limit and were counted as ties.`);
 		if (stats.failed) console.log(`${stats.failed} battle(s) crashed and weren't counted. The first error: ${stats.firstError.stack || stats.firstError}`);
 		console.log(`Records saved to ${shownFile}\n`);
@@ -483,7 +600,7 @@ async function main(argv) {
 
 module.exports = {
 	setKey, listSets, loadRecords, saveRecords, resetRecords, applyGame, wilson, buildReport, formatReport,
-	loadSim, runGames, DEFAULT_FORMAT,
+	loadSim, makeJob, playJob, runGames, DEFAULT_FORMAT,
 };
 
 if (require.main === module) {

@@ -141,6 +141,38 @@ describe('Set win rates', () => {
 	describe('playing battles', function () {
 		this.timeout(60000);
 
+		it('should give identical records for the same seed whatever the number of workers', async () => {
+			const sim = winrates.loadSim();
+			const format = sim.Dex.formats.get(winrates.DEFAULT_FORMAT);
+			const entries = winrates.listSets({
+				garchomp: { level: 100, sets: [
+					{ movepool: ['Metronome'], abilities: ['Rough Skin'], item: 'Leftovers' },
+					{ movepool: ['Metronome'], abilities: ['Sand Veil'], item: ['Choice Scarf', 'Life Orb'], nature: 'Jolly' },
+				] },
+				magikarp: { level: 5, sets: [{ movepool: ['Metronome'], abilities: ['Swift Swim'] }] },
+			});
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'set-winrates-'));
+			try {
+				const play = async workers => {
+					const records = { version: 1, format: format.id, battles: 0, sets: {} };
+					const stats = await winrates.runGames({
+						sim, format, entries, records, recordsFile: path.join(dir, `records-${workers}.json`),
+						games: 100, prng: new sim.PRNG([5, 6, 7, 8]), workers,
+					});
+					return { records, stats };
+				};
+				const single = await play(1);
+				const parallel = await play(2);
+				assert.equal(single.stats.workers, 1);
+				assert.equal(parallel.stats.workers, 2, 'the battles should have been shared between two threads');
+				assert.equal(parallel.stats.played, 100);
+				assert.equal(parallel.stats.failed, 0, parallel.stats.firstError && parallel.stats.firstError.stack);
+				assert.deepEqual(parallel.records, single.records);
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
 		it('should rate a far stronger set above a far weaker one, and keep wins and losses in balance', async () => {
 			const sim = winrates.loadSim();
 			const format = sim.Dex.formats.get(winrates.DEFAULT_FORMAT);

@@ -6,14 +6,24 @@ win/loss/tie record for every individual set.
 
 ```
 node tools/set-winrates                  # play 1000 more battles, then show the table
-node tools/set-winrates --games 5000     # play more (about 100 battles a second)
+node tools/set-winrates --games 5000     # play more
 node tools/set-winrates --report         # just show the table, play nothing
 node tools/set-winrates --reset          # forget all records
 node tools/set-winrates --reset --games 2000   # forget them, then play 2000 fresh battles
 ```
 
 Every run builds first, so it always tests the sets as they are in the file right now. It is safe to stop with
-Ctrl+C: the current battle finishes, the records are saved, and the table is shown. Records pile up across runs.
+Ctrl+C: the battles in progress finish, the records are saved, and the table is shown. Records pile up across runs.
+
+## Speed
+
+Battles are shared between several threads, one per CPU core by default, and each thread plays roughly 100 battles a
+second. That's about 1.7x as fast as a single thread on 2 cores, and more on a machine with more. `--workers N`
+chooses the number of threads, and `--workers 1` plays on a single thread. Very short runs aren't split up, since each
+thread takes a moment to load the simulator.
+
+The results don't depend on the number of threads: for a given `--seed`, `--workers 1` and `--workers 8` end up with
+exactly the same records.
 
 ## Reading the table
 
@@ -61,6 +71,7 @@ Records live in `logs/set-winrates/<format>.json`, which git ignores.
 | `--format ID` | Another format. It must have exactly one Pokemon per player (`Max Team Size = 1`). |
 | `--sets FILE` | Test the sets in `FILE` instead of the format's own sets file. |
 | `--records FILE` | Keep the records in `FILE`, for example to compare two versions of your sets. |
+| `--workers N` | How many threads to play on (default: one per CPU core). |
 | `--seed N` | Make the pairings and the battles repeatable. |
 | `--no-build` | Skip the build. Only for quick re-runs when nothing has changed. |
 
